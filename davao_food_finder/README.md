@@ -35,7 +35,7 @@ A small server-rendered site using HTML, CSS, JavaScript, and PHP. No Laravel, N
    Set-Location 'The file location of this app'
    & 'C:\xampp\php\php.exe' -d extension=gd -S 127.0.0.1:8080 -t .
    ```
-   If XAMPP or the project is installed elsewhere, adjust the PHP executable and project folder paths. Without a key, the app can still show matches from the local dataset. Keep the key on the server: do not put it in `Main.html` or browser JavaScript, and do not commit a real key to source control. The default model is `gpt-5.5`; if needed, set `OPENAI_MODEL` to another model supported by your API account before starting the server.
+   If XAMPP or the project is installed elsewhere, adjust the PHP executable and project folder paths. Without a key, the app can still show matches from the local dataset. Keep the key on the server: do not put it in `Main.html` or browser JavaScript, and do not commit a real key to source control. The app is configured to use `gpt-4o-mini`.
 5. Open [http://127.0.0.1:8080](http://127.0.0.1:8080) in your browser. Keep the PowerShell window open while using the app; press **Ctrl+C** there to stop the server.
 
 Run the commands in the same PowerShell window so the optional API key is available to PHP. The PHP server serves `index.php`, which redirects to `Main.html`. Do not open `Main.html` as a `file://` URL or use a static-only preview extension: searches need PHP to handle `api.php`.
@@ -46,7 +46,8 @@ On macOS/Linux, use `cd davao_food_finder`, `composer install`, optionally set `
 - Chat-style search with multi-turn follow-ups such as “show me more”, “what about Japanese food?”, or “similar but cheaper”.
 - OpenAI's Responses API searches the live web for each request and returns structured restaurant recommendations that appear as cards with cuisine, available ratings, price, location, directions, and source links. Local Davao City dataset matches are shown separately as additional recommendations. Conversation history supports follow-up questions. No separate OpenAI SDK install is needed for this PHP project.
 - Recommendations are limited to Davao City. Requests for another location receive a brief clarification instead of AI or dataset recommendations; online recommendations are only displayed when their city is verified as Davao City.
-- OpenAI model usage and built-in web search may incur API charges.
+- The app uses `gpt-4o-mini`, a lower-cost model. Model tokens and built-in web search may still incur API charges; web search is billed separately from model tokens.
+- The page identifies the configured model and updates to the model name returned by OpenAI after a successful AI response.
 - Results remain grouped under the query that produced them. Straightforward restaurant requests show results without repetitive canned replies; OpenAI can respond conversationally when an answer is useful.
 - CSVs are scanned in a streaming manner; imported place records are cached in `data/.places-cache.json` to avoid re-reading large files every query. The cache is rebuilt when dataset file names, sizes, or modified times change. To force a rebuild, delete that cache file.
 - Dataset city filtering requires the detected `City` field to contain `Davao City`. Other Davao Region cities are excluded.
@@ -54,7 +55,7 @@ On macOS/Linux, use `cd davao_food_finder`, `composer install`, optionally set `
 - If OpenAI or web search is unconfigured or unavailable, relevant local matching is still shown as a fallback.
 
 ## Notes
-- The default model is `gpt-5.5`. The project calls the Responses API REST endpoint with its web search tool directly; check model access, web search availability, and API key status in the OpenAI dashboard if live search cannot respond.
+- The model is fixed to `gpt-4o-mini` to avoid accidentally using a more expensive model through an `OPENAI_MODEL` environment setting. The project calls the Responses API REST endpoint with its web search tool directly; check model access, web search availability, and API key status in the OpenAI dashboard if live search cannot respond.
 - Put restaurant and review datasets in `data/`. CSV files are read directly; Excel files (`.xlsx`/`.xls`) require the PHP extensions listed above. The included `ph_restos_2025.csv` and `ph_reviews_2025.csv` files are already in `data/`.
 - The review CSV is aggregated by `StoreId` and can take a little time on the first request. After the cache is built, normal requests should be faster.
 - If you have multiple copies of the same restaurant/review dataset in `data/`, review counts can be double-counted. Prefer keeping one current version of each dataset.

@@ -183,7 +183,7 @@ function shortlistPlaces(array $places, string $query, int $limit): array {
 }
 function answerWithOpenAI(string $query, array $history, array $candidates): array {
     $fallbackIds = array_map(fn($p) => $p['_id'], $candidates);
-    if (OPENAI_API_KEY === '') return ['', $fallbackIds, 'not_configured', [], [], false];
+    if (OPENAI_API_KEY === '') return ['', $fallbackIds, 'not_configured', [], [], false, ''];
 
     $compact = [];
     foreach ($candidates as $p) $compact[] = [
@@ -259,7 +259,7 @@ function answerWithOpenAI(string $query, array $history, array $candidates): arr
     $raw = curl_exec($ch); $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); $curlError = curl_error($ch); curl_close($ch);
     if ($raw === false || $status < 200 || $status >= 300) {
         error_log('OpenAI API error HTTP ' . $status . ': ' . ($curlError ?: (string)$raw));
-        return ['', $fallbackIds, 'error', [], [], false];
+        return ['', $fallbackIds, 'error', [], [], false, ''];
     }
     $decoded = json_decode($raw, true);
     $text = null;
@@ -280,17 +280,17 @@ function answerWithOpenAI(string $query, array $history, array $candidates): arr
     }
     if (!is_string($text)) {
         error_log('OpenAI returned a Responses API payload without output text.');
-        return ['', $fallbackIds, 'error', [], [], false];
+        return ['', $fallbackIds, 'error', [], [], false, ''];
     }
     $parsed = json_decode($text, true);
     if (!is_array($parsed) || !is_array($parsed['ids'] ?? null) || !is_array($parsed['web_places'] ?? null) || !is_string($parsed['answer'] ?? null) || !is_bool($parsed['out_of_scope'] ?? null)) {
         error_log('OpenAI returned an invalid structured response.');
-        return ['', $fallbackIds, 'error', [], [], false];
+        return ['', $fallbackIds, 'error', [], [], false, ''];
     }
     if ($parsed['out_of_scope']) {
         $answer = trim((string)$parsed['answer']);
         if ($answer === '') $answer = 'I can only suggest places in Davao City. I can help find that in Davao instead.';
-        return [$answer, [], 'ready', [], [], true];
+        return [$answer, [], 'ready', [], [], true, trim((string)($decoded['model'] ?? OPENAI_MODEL))];
     }
     $allowed = array_fill_keys($fallbackIds, true); $ids = [];
     foreach (($parsed['ids'] ?? []) as $id) if (is_string($id) && isset($allowed[$id]) && !in_array($id, $ids, true)) $ids[] = $id;
@@ -309,7 +309,7 @@ function answerWithOpenAI(string $query, array $history, array $candidates): arr
         ];
     }
     $answer = trim((string)($parsed['answer'] ?? ''));
-    return [$answer, $ids ?: $fallbackIds, 'ready', $sources, $webPlaces, false];
+    return [$answer, $ids ?: $fallbackIds, 'ready', $sources, $webPlaces, false, trim((string)($decoded['model'] ?? OPENAI_MODEL))];
 }
 function isDavaoCityName(string $city): bool {
     return preg_match('/\bdavao\s+city\b/i', $city) === 1;

@@ -67,10 +67,10 @@ h1{font-size:clamp(36px,6vw,62px);letter-spacing:-.055em;line-height:1.03;margin
 </style></head><body><main class="wrap"><header class="hero"><div class="eyebrow">Davao City · Food guide</div><h1>What's on your mind?</h1><p>Find a new favorite in Davao City. Tell us what you’re craving and explore local spots, ratings, and directions.</p></header>
 <div class="chat"><div id="thread" class="thread" aria-live="polite"><div class="bubble assistant">Hi! What are you craving? Try “fried chicken”, “quiet cafes to study”, or “more affordable Japanese food”. I’ll search for current information and share the places with you.</div></div>
 <form id="searchForm" class="search"><input id="query" name="query" placeholder="Ask for food or follow-up options…" autocomplete="off" required maxlength="300"><button id="sendButton" type="submit">Send</button></form><p id="status" class="status" role="status"></p></div>
-<div class="footer">Web answers include source links · Ratings and place details come from your dataset · Photos are illustrative, not verified restaurant photos.</div></main>
+<div class="footer"><p id="modelIndicator">AI model configured: gpt-4o-mini · actual model is shown after a successful AI response.</p>Web answers include source links · Ratings and place details come from your dataset · Photos are illustrative, not verified restaurant photos.</div></main>
 <div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><section class="modal"><button id="closeModal" class="close" aria-label="Close details">&times;</button><div id="modalContent"></div></section></div>
 <script>
-const form=document.getElementById('searchForm'),input=document.getElementById('query'),button=document.getElementById('sendButton'),statusEl=document.getElementById('status'),thread=document.getElementById('thread'),backdrop=document.getElementById('modalBackdrop');
+const form=document.getElementById('searchForm'),input=document.getElementById('query'),button=document.getElementById('sendButton'),statusEl=document.getElementById('status'),thread=document.getElementById('thread'),backdrop=document.getElementById('modalBackdrop'),modelIndicator=document.getElementById('modelIndicator');
 const history=[];let lastResults=[];const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function addBubble(role,text){const el=document.createElement('div');el.className='bubble '+role;el.textContent=text;thread.appendChild(el);el.scrollIntoView({behavior:'smooth',block:'nearest'});return el}
 function imageFor(p){const type=String(p.food_type||p.name||'').toLowerCase();const photos=[[/cafe|coffee|tea|bakery|dessert|pastr/i,'photo-1501339847302-ac426a4a7cbb'],[/japan|sushi|ramen|sashimi|korean|asian|noodle/i,'photo-1579871494447-9811cf80d66c'],[/pizza|italian|pasta/i,'photo-1579751626657-72bc17010498'],[/burger|american|sandwich|chicken|grill|barbecue|bbq/i,'photo-1555939594-58d7cb561ad1'],[/seafood|fish|shrimp/i,'photo-1519708227418-c8fd9a32b7a2'],[/filipino|filipin|local|rice/i,'photo-1512621776951-a57141f2eefd']];const match=photos.find(([pattern])=>pattern.test(type));return{url:`https://images.unsplash.com/${match?match[1]:'photo-1517248135467-4c7edcad34c4'}?auto=format&fit=crop&w=900&q=80`,label:match?String(p.food_type||'Local cuisine'):'Dining atmosphere'}}
@@ -94,6 +94,7 @@ form.addEventListener('submit',async e=>{
   if(!contentType.includes('application/json'))throw new Error(`The PHP server returned an unexpected response (${response.status}). Check the PHP server setup and logs.`);
   const data=await response.json();
   if(!response.ok)throw new Error(data.error||`Search failed (${response.status}).`);
+  if(data.assistantStatus==='ready'&&typeof data.modelUsed==='string'&&data.modelUsed)modelIndicator.textContent=`AI model used for the last successful response: ${data.modelUsed}.`;
   history.push({role:'user',content:query});
   const answer=String(data.answer||'').trim();
   let assistantBubble=null;
