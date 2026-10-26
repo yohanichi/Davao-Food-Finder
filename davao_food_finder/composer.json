@@ -1,0 +1,11 @@
+{
+  "name": "davao-food-finder/prototype",
+  "description": "Plain PHP Davao City food-place search using Excel datasets and OpenAI",
+  "type": "project",
+  "require": {
+    "php": ">=8.1",
+    "ext-curl": "*",
+    "ext-mbstring": "*",
+    "phpoffice/phpspreadsheet": "^2.2"
+  }
+}
