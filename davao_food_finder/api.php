@@ -45,15 +45,16 @@ try {
         $seenNames = array_fill_keys(array_map(fn($n) => mb_strtolower(trim((string)$n)), $shownNames), true);
         $candidates = array_values(array_filter($candidates, fn($p) => !isset($seenNames[mb_strtolower(trim((string)$p['name']))])));
     }
-    [$answer, $rankedIds, $assistantStatus, $sources, $webResults] = answerWithOpenAI($query, $history, $candidates);
+    [$answer, $rankedIds, $assistantStatus, $sources, $webResults, $outOfScope] = answerWithOpenAI($query, $history, $candidates);
+    if ($outOfScope) $candidates = [];
     $byId = [];
     foreach ($candidates as $p) $byId[$p['_id']] = $p;
     $results = [];
     foreach ($rankedIds as $id) if (isset($byId[$id])) $results[] = publicPlace($byId[$id]);
-    if (!$results) $results = array_map('publicPlace', array_slice($candidates, 0, 10));
+    if (!$outOfScope && !$results) $results = array_map('publicPlace', array_slice($candidates, 0, 10));
     $results = array_slice($results, 0, 20);
     foreach ($results as &$r) unset($r['_id'], $r['store_id'], $r['source']); unset($r);
-    echo json_encode(['answer'=>$answer, 'assistantStatus'=>$assistantStatus, 'sources'=>$sources, 'webResults'=>$webResults, 'results'=>$results, 'count'=>count($results)], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    echo json_encode(['answer'=>$answer, 'assistantStatus'=>$assistantStatus, 'outOfScope'=>$outOfScope, 'sources'=>$sources, 'webResults'=>$webResults, 'results'=>$results, 'count'=>count($results)], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
 } catch (Throwable $e) {
     if (http_response_code() < 400) http_response_code(500);
     echo json_encode(['error'=>$e->getMessage()], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);

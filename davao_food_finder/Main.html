@@ -79,6 +79,56 @@ function ratingMarkup(p){const rating=Number(p.rating);if(!Number.isFinite(ratin
 function openDetails(p){const rating=Number(p.rating);const stars=Number.isFinite(rating)&&rating>0?`<div class="stars">★ ${esc(rating.toFixed(1))}/5 <span class="small">${p.review_count?` · ${esc(p.review_count)} reviews`:''}</span></div>`:`<p class="meta">No verified rating ${p.online?'found online':'in the dataset'}</p>`;const mapUrl=mapUrlFor(p);const photo=imageFor(p);document.getElementById('modalContent').innerHTML=`<div class="place-photo"><img src="${esc(photo.url)}" alt="Representative ${esc(photo.label)} photo" loading="lazy"></div><h2 id="modalTitle">${esc(p.name||'Unnamed place')}</h2>${stars}<p>${esc(p.description||p.food_type||'No description available.')}</p><p><strong>Restaurant type:</strong> ${esc(p.food_type||'Not verified')}</p><p><strong>Price range:</strong> ${esc(p.price_range||'Not verified')}</p><p><strong>Location:</strong> ${esc(p.address||p.city||'Address not verified')}</p><p><a href="${esc(mapUrl)}" target="_blank" rel="noopener noreferrer">Open location in Google Maps ↗</a></p><p class="small">Image is representative, not a verified photo of this restaurant. ${p.online?'Online details can change; check linked search sources.':'Ratings and details are based on supplied data.'}</p>`;backdrop.classList.add('open');document.getElementById('closeModal').focus()}
 function addSources(sources,bubble){if(!Array.isArray(sources)||!sources.length||!bubble)return;const section=document.createElement('div');section.className='small';section.style.marginTop='8px';const label=document.createElement('strong');label.textContent='Sources:';section.appendChild(label);sources.forEach(source=>{try{const url=new URL(source.url);if(!['http:','https:'].includes(url.protocol))return;const link=document.createElement('a');link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';link.textContent=source.title||url.hostname;link.style.marginLeft='8px';section.appendChild(link)}catch{}});if(section.querySelector('a'))bubble.appendChild(section)}
 function renderPlaces(query,places,title){if(!Array.isArray(places)||!places.length)return;const group=document.createElement('section');group.className='turn-results';const heading=document.createElement('h2');heading.className='results-heading';heading.textContent=`${title}: ${query}`;group.appendChild(heading);const grid=document.createElement('div');grid.className='results';group.appendChild(grid);places.forEach(p=>{const photo=imageFor(p);const address=p.address||p.city||'Location not verified';const card=document.createElement('article');card.className='place';card.innerHTML=`<div class="place-photo"><img src="${esc(photo.url)}" alt="Representative ${esc(photo.label)} photo" loading="lazy"><span class="photo-label">Illustrative image</span></div><div class="place-body"><div class="place-topline"><h3>${esc(p.name||'Unnamed place')}</h3>${ratingMarkup(p)}</div><div class="place-tags"><span class="tag">${esc(p.food_type||'Restaurant')}</span>${p.price_range?`<span class="tag price">${esc(p.price_range)}</span>`:''}</div><p class="place-description">${esc(p.description||'Explore this place in Davao City.')}</p><div class="place-location"><span class="pin" aria-hidden="true">⌖</span><span>${esc(address)}</span></div><div class="place-actions"><button class="details" type="button">View details</button><a class="map-link" href="${esc(mapUrlFor(p))}" target="_blank" rel="noopener noreferrer">Directions ↗</a></div><p class="photo-note">Representative food photo, not a verified photo of this restaurant.</p></div>`;card.querySelector('.details').addEventListener('click',()=>openDetails(p));const image=card.querySelector('.place-photo img');image.addEventListener('error',()=>{image.remove();card.querySelector('.place-photo').style.background='linear-gradient(140deg,#e1ebdf,#b9d3bc)'},{once:true});grid.appendChild(card)});thread.appendChild(group);group.scrollIntoView({behavior:'smooth',block:'nearest'})}
-form.addEventListener('submit',async e=>{e.preventDefault();const query=input.value.trim();if(!query)return;addBubble('user',query);input.value='';button.disabled=true;button.textContent='Thinking…';statusEl.textContent='Searching the web and Davao City places…';try{const response=await fetch('api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,history,shownNames:lastResults.map(p=>p.name)})});const contentType=response.headers.get('content-type')||'';if(!contentType.includes('application/json'))throw new Error(`The PHP server returned an unexpected response (${response.status}). Check the PHP server setup and logs.`);const data=await response.json();if(!response.ok)throw new Error(data.error||`Search failed (${response.status}).`);history.push({role:'user',content:query});const answer=String(data.answer||'').trim();let assistantBubble=null;if(answer){assistantBubble=addBubble('assistant',answer);history.push({role:'assistant',content:answer});addSources(data.sources,assistantBubble)}while(history.length>10)history.shift();const webResults=Array.isArray(data.webResults)?data.webResults.map(place=>({...place,online:true})):[];lastResults=webResults.length?webResults:(data.results||[]);renderPlaces(query,webResults,'Found online',null);renderPlaces(query,data.results||[],'More local favorites',null);const count=lastResults.length;statusEl.textContent=webResults.length?`${webResults.length} AI-sourced ${webResults.length===1?'recommendation':'recommendations'} shown with links to sources.`:`${count} local dataset ${count===1?'match':'matches'} shown.`;if(data.assistantStatus==='not_configured')statusEl.textContent+=' OpenAI is not configured; set OPENAI_API_KEY on the PHP server to enable AI and live web search.';else if(data.assistantStatus==='error')statusEl.textContent+=' Live web search could not be completed; showing local dataset matches. Check the PHP server error log.'}catch(err){const message=err instanceof TypeError?(location.protocol==='file:'?'This page was opened as a file. Start the PHP server and open http://127.0.0.1:8080/Main.html instead.':'Cannot reach the PHP server. Start it with `php -S 127.0.0.1:8080 -t davao_food_finder` from the workspace folder, then retry.'):err.message;input.value=query;addBubble('assistant',message);statusEl.textContent='Could not send your request. The query is still in the input so you can retry.'}finally{button.disabled=false;button.textContent='Send';input.focus()}});
+form.addEventListener('submit',async e=>{
+ e.preventDefault();
+ const query=input.value.trim();
+ if(!query)return;
+ addBubble('user',query);
+ input.value='';
+ button.disabled=true;
+ button.textContent='Thinking…';
+ statusEl.textContent='Searching the web and Davao City places…';
+ try{
+  const response=await fetch('api.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,history,shownNames:lastResults.map(p=>p.name)})});
+  const contentType=response.headers.get('content-type')||'';
+  if(!contentType.includes('application/json'))throw new Error(`The PHP server returned an unexpected response (${response.status}). Check the PHP server setup and logs.`);
+  const data=await response.json();
+  if(!response.ok)throw new Error(data.error||`Search failed (${response.status}).`);
+  history.push({role:'user',content:query});
+  const answer=String(data.answer||'').trim();
+  let assistantBubble=null;
+  if(answer){
+   assistantBubble=addBubble('assistant',answer);
+   history.push({role:'assistant',content:answer});
+   addSources(data.sources,assistantBubble);
+  }
+  while(history.length>10)history.shift();
+  const outOfScope=data.outOfScope===true;
+  const webResults=outOfScope?[]:(Array.isArray(data.webResults)?data.webResults.map(place=>({...place,online:true})):[]);
+  const localResults=outOfScope?[]:(data.results||[]);
+  lastResults=webResults.length?webResults:localResults;
+  renderPlaces(query,webResults,'Found online',null);
+  renderPlaces(query,localResults,'More local favorites',null);
+  const count=lastResults.length;
+  statusEl.textContent=outOfScope
+   ?'This assistant only recommends places in Davao City.'
+   :webResults.length
+    ?`${webResults.length} AI-sourced ${webResults.length===1?'recommendation':'recommendations'} shown with links to sources.`
+    :`${count} local dataset ${count===1?'match':'matches'} shown.`;
+  if(!outOfScope&&data.assistantStatus==='not_configured')statusEl.textContent+=' OpenAI is not configured; set OPENAI_API_KEY on the PHP server to enable AI and live web search.';
+  else if(!outOfScope&&data.assistantStatus==='error')statusEl.textContent+=' Live web search could not be completed; showing local dataset matches. Check the PHP server error log.';
+ }catch(err){
+  const message=err instanceof TypeError
+   ?(location.protocol==='file:'?'This page was opened as a file. Start the PHP server and open http://127.0.0.1:8080/Main.html instead.':'Cannot reach the PHP server. Start it with `php -S 127.0.0.1:8080 -t davao_food_finder` from the workspace folder, then retry.')
+   :err.message;
+  input.value=query;
+  addBubble('assistant',message);
+  statusEl.textContent='Could not send your request. The query is still in the input so you can retry.';
+ }finally{
+  button.disabled=false;
+  button.textContent='Send';
+  input.focus();
+ }
+});
 document.getElementById('closeModal').addEventListener('click',()=>backdrop.classList.remove('open'));backdrop.addEventListener('click',e=>{if(e.target===backdrop)backdrop.classList.remove('open')});document.addEventListener('keydown',e=>{if(e.key==='Escape')backdrop.classList.remove('open')});
 </script></body></html>
