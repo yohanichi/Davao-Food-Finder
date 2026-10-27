@@ -45,16 +45,14 @@ On macOS/Linux, use `cd davao_food_finder`, `composer install`, optionally set `
 ## What works
 - Chat-style search with multi-turn follow-ups such as “show me more”, “what about Japanese food?”, or “similar but cheaper”.
 - OpenAI's Responses API searches the live web for each request and returns structured restaurant recommendations that appear as cards with cuisine, available ratings, price, location, directions, and source links. Local Davao City dataset matches are shown separately as additional recommendations. Conversation history supports follow-up questions. No separate OpenAI SDK install is needed for this PHP project.
-- Recommendations are limited to Davao City. Online places are only displayed when both the city field and the end of the address explicitly identify Davao City; unverified locations are discarded. Requests for another location receive a brief clarification instead of recommendations.
+- Recommendations are limited to Davao City. Requests for another location receive a brief clarification instead of AI or dataset recommendations; online recommendations are only displayed when their city is verified as Davao City.
 - The app uses `gpt-4o-mini`, a lower-cost model. Model tokens and built-in web search may still incur API charges; web search is billed separately from model tokens.
 - The page identifies the configured model and updates to the model name returned by OpenAI after a successful AI response.
-- The assistant is instructed to respond in English, preserve the user's food and dining constraints, and avoid filling recommendations with unrelated candidates. Responses and recommendation descriptions that fail the server's English-language check are rejected, after which the app offers the local-data fallback. Common greetings and help prompts are answered locally without an external AI/web-search request.
-- Recommendation messages are assembled from verified online place names and short reasons shown in the result cards. The chat reply avoids raw URLs and markdown; maps and sources remain available through the place cards. Local dataset matches are not silently substituted when web results cannot be verified; the app asks before showing them.
 - Results remain grouped under the query that produced them. Straightforward restaurant requests show results without repetitive canned replies; OpenAI can respond conversationally when an answer is useful.
 - CSVs are scanned in a streaming manner; imported place records are cached in `data/.places-cache.json` to avoid re-reading large files every query. The cache is rebuilt when dataset file names, sizes, or modified times change. To force a rebuild, delete that cache file.
 - Dataset city filtering requires the detected `City` field to contain `Davao City`. Other Davao Region cities are excluded.
 - Restaurant details show dataset ratings/reviewer counts and a Google Maps search link. Price and address details show “not available” if the dataset doesn't contain them.
-- If OpenAI or web search is unconfigured or unavailable, online results are not shown. The app asks whether to show matching recommendations from the Davao-only local dataset instead; local results are loaded only after the user chooses that option.
+- If OpenAI or web search is unconfigured or unavailable, relevant local matching is still shown as a fallback.
 
 ## Notes
 - The model is fixed to `gpt-4o-mini` to avoid accidentally using a more expensive model through an `OPENAI_MODEL` environment setting. The project calls the Responses API REST endpoint with its web search tool directly; check model access, web search availability, and API key status in the OpenAI dashboard if live search cannot respond.
