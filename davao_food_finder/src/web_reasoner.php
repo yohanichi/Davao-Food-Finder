@@ -112,7 +112,7 @@ function answerWithHybridPipeline(string $query, array $history, array $candidat
         ['role'=>'user','content'=>'Query: ' . $query . '\nPlaywright evidence: ' . $evidenceJson . '\n2025 local records for name/address reconciliation only: ' . $localJson]
     ];
     $cleanerPayload = json_encode(['model'=>OPENAI_MODEL,'messages'=>$cleanerMessages,'temperature'=>0.1,'response_format'=>['type'=>'json_object']], JSON_UNESCAPED_UNICODE);
-    [$cleanerRaw,$cleanerStatus] = deepSeekHttpPost('https://api.openai.com/v1/chat/completions', ['Content-Type: application/json','Authorization: Bearer ' . OPENAI_API_KEY], $cleanerPayload, 120);
+    [$cleanerRaw,$cleanerStatus] = deepSeekHttpPost('https://api.openai.com/v1/chat/completions', ['Content-Type: application/json','Authorization: Bearer ' . OPENAI_API_KEY], $cleanerPayload, 45);
     if ($cleanerRaw === '' || $cleanerStatus < 200 || $cleanerStatus >= 300) {
         error_log('GPT-4o mini Playwright cleaner failed HTTP ' . $cleanerStatus . ': ' . mb_substr($cleanerRaw,0,500));
         return answerWithDeepSeekPipelineFallback($query, $history, $candidates, $evidence, $options);
@@ -161,7 +161,7 @@ function answerWithHybridPipeline(string $query, array $history, array $candidat
     }
     $finalMessages[] = ['role'=>'user','content'=>'Latest query: ' . $query . '\nCurated evidence: ' . json_encode($structuredEvidence, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) . '\n2025 local records: ' . $localJson . '\nDeepSeek-R1 used: ' . ($deepSeekUsed ? 'true' : 'false')];
     $finalPayload = json_encode(['model'=>OPENAI_MODEL,'messages'=>$finalMessages,'temperature'=>0.2,'response_format'=>['type'=>'json_object']], JSON_UNESCAPED_UNICODE);
-    [$finalRaw,$finalStatus] = deepSeekHttpPost('https://api.openai.com/v1/chat/completions', ['Content-Type: application/json','Authorization: Bearer ' . OPENAI_API_KEY], $finalPayload, 120);
+    [$finalRaw,$finalStatus] = deepSeekHttpPost('https://api.openai.com/v1/chat/completions', ['Content-Type: application/json','Authorization: Bearer ' . OPENAI_API_KEY], $finalPayload, 45);
     if ($finalRaw === '' || $finalStatus < 200 || $finalStatus >= 300) {
         error_log('GPT-4o mini final response failed HTTP ' . $finalStatus . ': ' . mb_substr($finalRaw,0,500));
         return answerWithDeepSeekPipelineFallback($query, $history, $candidates, $evidence, $options);
@@ -216,7 +216,7 @@ function answerWithGPT4oMini(string $query, array $history, array $candidates, a
         'temperature'=>(float)($options['temperature'] ?? 0.2),
         'response_format'=>['type'=>'json_object'],
     ], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
-    [$raw,$status] = deepSeekHttpPost('https://api.openai.com/v1/chat/completions', ['Content-Type: application/json','Authorization: Bearer ' . OPENAI_API_KEY], $payload, 120);
+    [$raw,$status] = deepSeekHttpPost('https://api.openai.com/v1/chat/completions', ['Content-Type: application/json','Authorization: Bearer ' . OPENAI_API_KEY], $payload, 45);
     if ($raw === '' || $status < 200 || $status >= 300) {
         error_log('GPT-4o mini API error HTTP ' . $status . ': ' . mb_substr($raw, 0, 500));
         return ['', $fallbackIds, 'error', $evidence['sources'] ?? [], [], false, OPENAI_MODEL];
