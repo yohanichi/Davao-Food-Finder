@@ -1,14 +1,18 @@
 <?php
 declare(strict_types=1);
+ob_start();
+set_time_limit(240);
 session_start();
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
+header('Cache-Control: no-store, no-cache, must-revalidate');
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/src/config.php';
 require_once __DIR__ . '/src/search.php';
 require_once __DIR__ . '/src/web_reasoner.php';
 
 try {
+    $requestStartedAt = microtime(true);
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); throw new RuntimeException('Use POST for searches.'); }
     $body = json_decode(file_get_contents('php://input'), true) ?: [];
     $query = trim((string)($body['query'] ?? ''));
@@ -84,9 +88,33 @@ try {
     if (!$outOfScope && !$results) $results = array_map('publicPlace', array_slice($candidates, 0, 10));
     $results = array_slice($results, 0, 20);
     foreach ($results as &$r) unset($r['_id'], $r['store_id'], $r['source']); unset($r);
-    echo json_encode(['answer'=>$answer, 'assistantStatus'=>$assistantStatus, 'modelUsed'=>$modelUsed, 'outOfScope'=>$outOfScope, 'sources'=>$sources, 'webResults'=>$webResults, 'results'=>$results, 'count'=>count($results)], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    ob_clean();
+    $playwrightSuccess = ($evidence['success'] ?? false) === true;
+    $metrics = [
+        'total_latency_ms'=>(int)round((microtime(true) - $requestStartedAt) * 1000),
+        'playwright'=>[
+            'success'=>$playwrightSuccess,
+            'cache'=>$evidence['cache'] ?? 'unknown',
+            'result_count'=>count($evidence['results'] ?? []),
+            'source_count'=>count($sources ?? []),
+            'latency_ms'=>$evidence['latency_ms'] ?? 0
+        ],
+        'deepseek'=>[
+            'configured'=>DEEPSEEK_API_KEY !== '' || DEEPSEEK_BASE_URL !== '',
+            'success'=>$assistantStatus === 'ready' && ($reasoningProvider === 'deepseek' || $modelUsed === DEEPSEEK_MODEL),
+            'model'=>$modelUsed === DEEPSEEK_MODEL ? DEEPSEEK_MODEL : ''
+        ],
+        'gpt4o'=>[
+            'configured'=>OPENAI_API_KEY !== '',
+            'success'=>$reasoningProvider === 'gpt-4o-mini' && $assistantStatus === 'ready',
+            'model'=>OPENAI_MODEL,
+            'error'=>$GLOBALS['providerErrors']['gpt4o'] ?? null
+        ]
+    ];
+    echo json_encode(['answer'=>$answer, 'assistantStatus'=>$assistantStatus, 'modelUsed'=>$modelUsed, 'outOfScope'=>$outOfScope, 'sources'=>$sources, 'webResults'=>$webResults, 'results'=>$results, 'count'=>count($results), 'metrics'=>$metrics], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
 } catch (Throwable $e) {
     if (http_response_code() < 400) http_response_code(500);
+    ob_clean();
     echo json_encode(['error'=>$e->getMessage()], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
 }
 

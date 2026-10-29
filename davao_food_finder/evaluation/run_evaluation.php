@@ -134,6 +134,17 @@ function requestEvaluation(string $apiUrl, array $case, array $config): array {
             'error' => $provider === 'gpt-4o-mini' ? 'GPT-4o mini failed; check the PHP server error log.' : 'DeepSeek R1 or Playwright failed; check the PHP server error log.',
             default => 'The API did not report a successful AI response.',
         };
+        if ($provider === 'gpt-4o-mini') {
+            $providerError = $data['metrics']['gpt4o']['error'] ?? null;
+            if (is_array($providerError)) {
+                $http = (int)($providerError['http'] ?? 0);
+                $message = trim((string)($providerError['message'] ?? ''));
+                $statusMessage = 'GPT-4o mini failed'
+                    . ($http > 0 ? ' with HTTP ' . $http : '')
+                    . ($message !== '' ? ': ' . mb_substr($message, 0, 240) : '')
+                    . '.';
+            }
+        }
         return ['latency'=>$latency, 'failure'=>$statusMessage, 'data'=>$data];
     }
     return ['latency'=>$latency, 'failure'=>null, 'data'=>$data];
@@ -237,13 +248,16 @@ function friedmanTest(array $scoresByConfig, int $queryCount): ?array {
 function parseArguments(array $arguments): array {
     $options = [
         'require_ai'=>false,
-        'api_url'=>'http://127.0.0.1:8081/api.php',
+        'quick'=>false,
+        'api_url'=>'http://127.0.0.1:8080/api.php',
         'ground_truth'=>__DIR__ . '/ground_truth.json',
         'providers'=>['deepseek'],
     ];
     foreach ($arguments as $argument) {
         if ($argument === '--require-ai') {
             $options['require_ai'] = true;
+        } elseif ($argument === '--quick') {
+            $options['quick'] = true;
         } elseif (str_starts_with($argument, '--api-url=')) {
             $options['api_url'] = substr($argument, strlen('--api-url='));
         } elseif (str_starts_with($argument, '--ground-truth=')) {
@@ -253,7 +267,7 @@ function parseArguments(array $arguments): array {
         } elseif (str_starts_with($argument, '--providers=')) {
             $options['providers'] = array_values(array_filter(array_map('trim', explode(',', substr($argument, strlen('--providers='))))));
         } else {
-            fail("Unknown option {$argument}. Supported options: --require-ai, --api-url=URL, --ground-truth=PATH, --provider=deepseek|gpt-4o-mini, --providers=deepseek,gpt-4o-mini.");
+            fail("Unknown option {$argument}. Supported options: --quick, --require-ai, --api-url=URL, --ground-truth=PATH, --provider=deepseek|gpt-4o-mini, --providers=deepseek,gpt-4o-mini.");
         }
     }
     $url = filter_var($options['api_url'], FILTER_VALIDATE_URL);
@@ -291,8 +305,10 @@ try {
 
     $configurations = [];
     foreach ($options['providers'] as $provider) {
-        foreach ([0.0, 0.3, 0.7] as $temperature) {
-            foreach (['baseline', 'strict_grounding'] as $promptStyle) {
+        $temperatures = $options['quick'] ? [0.0] : [0.0, 0.3, 0.7];
+        $promptStyles = $options['quick'] ? ['baseline'] : ['baseline', 'strict_grounding'];
+        foreach ($temperatures as $temperature) {
+            foreach ($promptStyles as $promptStyle) {
                 $configurations[] = [
                     'provider'=>$provider,
                     'id'=>sprintf('%s-T%.1f-%s', strtoupper($provider), $temperature, strtoupper($promptStyle === 'baseline' ? 'BASE' : 'STRICT')),
@@ -311,7 +327,9 @@ try {
     echo 'Outside-city scope checks: ' . count($scopeCases) . "\n";
     echo 'Configurations: ' . count($configurations) . ' (' . (count($cases) + count($scopeCases)) * count($configurations) . " total AI requests)\n";
     echo "Precision@5 = relevant unique returned names in the first five local results / 5; failed requests score 0.\n";
-    echo "Top-P is fixed at 1.0; temperatures and prompt styles are varied by exhaustive grid search.\n";
+    echo $options['quick']
+        ? "Quick mode is fixed at Top-P 1.0, temperature 0.0, and baseline prompt style.\n"
+        : "Top-P is fixed at 1.0; temperatures and prompt styles are varied by exhaustive grid search.\n";
     if ($options['require_ai']) echo "AI responses are required; non-ready responses count as failures.\n";
 
     $summary = [];
@@ -324,6 +342,12 @@ try {
         $latencies = [];
         $failures = 0;
         $configScores = [];
+        $playwrightSuccesses = 0;
+        $playwrightRequests = 0;
+        $playwrightEvidenceCount = 0;
+        $providerSuccesses = 0;
+        $providerRequests = 0;
+        $componentLatencySum = 0.0;
 
         foreach ($cases as $index => $case) {
             $response = requestEvaluation($options['api_url'], $case, $config);
@@ -333,6 +357,20 @@ try {
             $latencies[] = $latency;
             $failure = $response['failure'];
             $results = is_array($data['results'] ?? null) ? $data['results'] : [];
+            $metrics = is_array($data['metrics'] ?? null) ? $data['metrics'] : [];
+            $playwright = is_array($metrics['playwright'] ?? null) ? $metrics['playwright'] : [];
+            if ($playwright) {
+                $playwrightRequests++;
+                if (($playwright['success'] ?? false) === true) $playwrightSuccesses++;
+                $playwrightEvidenceCount += (int)($playwright['result_count'] ?? 0);
+            }
+            $providerKey = $config['provider'] === 'gpt-4o-mini' ? 'gpt4o' : 'deepseek';
+            $providerMetrics = is_array($metrics[$providerKey] ?? null) ? $metrics[$providerKey] : [];
+            if ($providerMetrics) {
+                $providerRequests++;
+                if (($providerMetrics['success'] ?? false) === true) $providerSuccesses++;
+            }
+            $componentLatencySum += (float)($metrics['total_latency_ms'] ?? 0) / 1000.0;
             if ($failure !== null) {
                 $failures++;
                 $anyAiFailure = true;
@@ -378,6 +416,19 @@ try {
                 $data = $response['data'];
                 $results = is_array($data['results'] ?? null) ? $data['results'] : [];
                 $webResults = is_array($data['webResults'] ?? null) ? $data['webResults'] : [];
+                $metrics = is_array($data['metrics'] ?? null) ? $data['metrics'] : [];
+                $playwright = is_array($metrics['playwright'] ?? null) ? $metrics['playwright'] : [];
+                if ($playwright) {
+                    $playwrightRequests++;
+                    if (($playwright['success'] ?? false) === true) $playwrightSuccesses++;
+                    $playwrightEvidenceCount += (int)($playwright['result_count'] ?? 0);
+                }
+                $providerKey = $config['provider'] === 'gpt-4o-mini' ? 'gpt4o' : 'deepseek';
+                $providerMetrics = is_array($metrics[$providerKey] ?? null) ? $metrics[$providerKey] : [];
+                if ($providerMetrics) {
+                    $providerRequests++;
+                    if (($providerMetrics['success'] ?? false) === true) $providerSuccesses++;
+                }
                 $scopePassed = ($data['outOfScope'] ?? false) === true && !$results && !$webResults;
                 $constraint = $scopePassed ? 'PASS' : 'FAIL';
                 $scopeResult = $scopePassed ? 'correctly refused' : 'returned out-of-city recommendations';
@@ -403,6 +454,11 @@ try {
             'ai_successes'=>$totalRequests - $failures,
             'error_rate'=>$errorRate,
             'scope_violations'=>$scopeViolations,
+            'playwright_successes'=>$playwrightSuccesses,
+            'playwright_requests'=>$playwrightRequests,
+            'playwright_evidence_count'=>$playwrightEvidenceCount,
+            'provider_successes'=>$providerSuccesses,
+            'provider_requests'=>$providerRequests,
         ];
         $scoresByConfig[] = $configScores;
         printf(
@@ -416,6 +472,23 @@ try {
             $totalRequests,
             $errorRate * 100,
             $scopeViolations
+        );
+        echo "\nComponent status table for {$config['id']}:\n";
+        printf("%-12s | %-8s | %-9s | %-8s\n", 'Component', 'Status', 'Successes', 'Evidence');
+        echo str_repeat('-', 52) . "\n";
+        printf(
+            "%-12s | %-8s | %-9s | %-8s\n",
+            $config['provider'] === 'gpt-4o-mini' ? 'GPT-4o mini' : 'DeepSeek R1',
+            $providerRequests > 0 && $providerSuccesses > 0 ? 'READY' : 'ERROR',
+            $providerSuccesses . '/' . $providerRequests,
+            '-'
+        );
+        printf(
+            "%-12s | %-8s | %-9s | %-8d\n",
+            'Playwright',
+            $playwrightRequests > 0 && $playwrightSuccesses > 0 ? 'SUCCESS' : 'FAILED',
+            $playwrightSuccesses . '/' . $playwrightRequests,
+            $playwrightEvidenceCount
         );
     }
 
@@ -436,6 +509,26 @@ try {
             $row['scope_violations']
         );
     }
+    echo "\n================ COMPONENT SUMMARY TABLE ================\n";
+    printf("%-16s | %-8s | %-13s | %-10s\n", 'Component', 'Status', 'Success Rate', 'Evidence');
+    echo str_repeat('-', 56) . "\n";
+    $deepseekSuccesses = $deepseekRequests = $gptSuccesses = $gptRequests = $playwrightSuccesses = $playwrightRequests = 0;
+    $playwrightEvidenceCount = 0;
+    foreach ($summary as $row) {
+        if ($row['provider'] === 'deepseek') {
+            $deepseekSuccesses += (int)$row['provider_successes'];
+            $deepseekRequests += (int)$row['provider_requests'];
+        } else {
+            $gptSuccesses += (int)$row['provider_successes'];
+            $gptRequests += (int)$row['provider_requests'];
+        }
+        $playwrightSuccesses += (int)$row['playwright_successes'];
+        $playwrightRequests += (int)$row['playwright_requests'];
+        $playwrightEvidenceCount += (int)$row['playwright_evidence_count'];
+    }
+    if ($deepseekRequests > 0) printf("%-16s | %-8s | %11.2f%% | %-10s\n", 'DeepSeek R1', $deepseekSuccesses > 0 ? 'READY' : 'ERROR', $deepseekSuccesses / $deepseekRequests * 100, '-');
+    if ($gptRequests > 0) printf("%-16s | %-8s | %11.2f%% | %-10s\n", 'GPT-4o mini', $gptSuccesses > 0 ? 'READY' : 'ERROR', $gptSuccesses / $gptRequests * 100, '-');
+    if ($playwrightRequests > 0) printf("%-16s | %-8s | %11.2f%% | %-10d\n", 'Playwright', $playwrightSuccesses > 0 ? 'SUCCESS' : 'FAILED', $playwrightSuccesses / $playwrightRequests * 100, $playwrightEvidenceCount);
     $totalRequests = count($cases) + count($scopeCases);
     $validSummary = array_values(array_filter($summary, fn($row) => $row['failures'] < $totalRequests));
     usort($validSummary, fn($a, $b) => ($b['mean_precision'] <=> $a['mean_precision'])

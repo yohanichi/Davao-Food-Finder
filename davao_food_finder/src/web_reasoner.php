@@ -1,39 +1,139 @@
 <?php
 
 function collectPlaywrightEvidence(string $query, string $cacheDir, int $ttlSeconds = 43200): array {
-    if (!is_dir($cacheDir) && !@mkdir($cacheDir, 0775, true)) return ['results'=>[], 'sources'=>[], 'cache'=>'error'];
-    $key = hash('sha256', mb_strtolower(trim(preg_replace('/\s+/u', ' ', $query))));
+    $startedAt = microtime(true);
+    $elapsed = fn(): int => (int)round((microtime(true) - $startedAt) * 1000);
+    if (!is_dir($cacheDir) && !@mkdir($cacheDir, 0775, true)) return ['results'=>[], 'sources'=>[], 'cache'=>'error', 'success'=>false, 'latency_ms'=>$elapsed()];
+    $searchQuery = trim(preg_replace('/\b(can|could|please|show|me|you|recommend|to|what|where|good)\b/iu', ' ', $query));
+    $searchQuery = trim(preg_replace('/\s+/u', ' ', $searchQuery));
+    if (!preg_match('/\bdavao\s+city\b/i', $searchQuery)) $searchQuery = 'Davao City ' . $searchQuery;
+    if (!preg_match('/\b(restaurant|restaurants|cafe|coffee|food|eatery|foodhouse)\b/i', $searchQuery)) $searchQuery .= ' restaurants food';
+    $key = hash('sha256', 'v2:' . mb_strtolower(preg_replace('/\s+/u', ' ', $searchQuery)));
     $cacheFile = rtrim($cacheDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $key . '.json';
     if (is_file($cacheFile) && (time() - (int)filemtime($cacheFile)) < $ttlSeconds) {
         $cached = json_decode((string)file_get_contents($cacheFile), true);
         if (is_array($cached) && is_array($cached['results'] ?? null)) {
             $sources = array_values(array_filter(array_map(fn($r) => isset($r['url']) ? ['title'=>$r['title'] ?? parse_url((string)$r['url'], PHP_URL_HOST) ?: 'Web source', 'url'=>(string)$r['url']] : null, $cached['results'])));
-            return ['results'=>$cached['results'], 'sources'=>$sources, 'cache'=>'hit'];
+            return ['results'=>$cached['results'], 'sources'=>$sources, 'cache'=>'hit', 'success'=>count($cached['results']) > 0, 'latency_ms'=>$elapsed()];
         }
     }
 
     $script = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'web-search.js';
     $node = trim((string)getenv('PLAYWRIGHT_NODE')) !== '' ? trim((string)getenv('PLAYWRIGHT_NODE')) : 'node';
-    $command = escapeshellarg($node) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($query);
+    $command = escapeshellarg($node) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($searchQuery);
     $pipes = [];
     $process = proc_open($command, [1=>['pipe','w'], 2=>['pipe','w']], $pipes);
-    if (!is_resource($process)) return ['results'=>[], 'sources'=>[], 'cache'=>'error'];
-    $stdout = stream_get_contents($pipes[1]); fclose($pipes[1]);
-    $stderr = stream_get_contents($pipes[2]); fclose($pipes[2]);
+    if (!is_resource($process)) return ['results'=>[], 'sources'=>[], 'cache'=>'error', 'success'=>false, 'latency_ms'=>$elapsed()];
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+    $stdout = '';
+    $stderr = '';
+    $deadline = microtime(true) + 25;
+    do {
+        $stdout .= stream_get_contents($pipes[1]);
+        $stderr .= stream_get_contents($pipes[2]);
+        $status = proc_get_status($process);
+        if (!$status['running']) break;
+        if (microtime(true) >= $deadline) {
+            proc_terminate($process);
+            break;
+        }
+        usleep(100000);
+    } while (true);
+    $stdout .= stream_get_contents($pipes[1]);
+    $stderr .= stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
     $exitCode = proc_close($process);
     if ($exitCode !== 0) {
         error_log('Playwright search failed: ' . trim($stderr));
-        return ['results'=>[], 'sources'=>[], 'cache'=>'error'];
+        return ['results'=>[], 'sources'=>[], 'cache'=>'error', 'success'=>false, 'latency_ms'=>$elapsed()];
     }
     $payload = json_decode(trim($stdout), true);
     $results = is_array($payload['results'] ?? null) ? array_slice($payload['results'], 0, 5) : [];
     @file_put_contents($cacheFile, json_encode(['query'=>$query,'results'=>$results,'cached_at'=>time()], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE), LOCK_EX);
     $sources = array_values(array_filter(array_map(fn($r) => isset($r['url']) ? ['title'=>$r['title'] ?? 'Web source', 'url'=>(string)$r['url']] : null, $results)));
-    return ['results'=>$results, 'sources'=>$sources, 'cache'=>'miss'];
+    return ['results'=>$results, 'sources'=>$sources, 'cache'=>'miss', 'success'=>count($results) > 0, 'latency_ms'=>$elapsed()];
+}
+
+function evidencePlacesFallback(array $evidence): array {
+    $places = [];
+    foreach (array_slice($evidence['results'] ?? [], 0, 8) as $item) {
+        if (!is_array($item)) continue;
+        $title = trim((string)($item['title'] ?? ''));
+        $text = trim((string)($item['text'] ?? $item['snippet'] ?? ''));
+        $url = trim((string)($item['url'] ?? ''));
+        if ($title === '' || $url === '' || preg_match('/\bdavao\s+city\b/i', $title . ' ' . $text) !== 1) continue;
+        if (preg_match('/^(loading|wikipedia|davao region$)/i', $title) === 1) continue;
+        if (preg_match('/\b(tourist|tourism|attractions?|travel guide|destinations?|region information|davao region)\b/i', $title . ' ' . $text) === 1) continue;
+        if (preg_match('/wikipedia|bing\.com|google\.com\/maps|\b(restaurant|cafe|coffee|food|eatery|pizza|chicken|pancake|pares|silogan|lechon)\b/i', $title . ' ' . $text) !== 1) continue;
+        $places[] = [
+            'name'=>mb_substr(preg_replace('/\s*[|\-]\s*[^|\-]+$/u', '', $title) ?: $title, 0, 160),
+            'food_type'=>'Davao City food information',
+            'rating'=>'',
+            'review_count'=>'',
+            'price_range'=>'',
+            'address'=>'Davao City',
+            'city'=>'Davao City',
+            'description'=>mb_substr($text !== '' ? $text : 'Verified Davao City web evidence.', 0, 360),
+            'source_url'=>$url
+        ];
+    }
+    $unique = [];
+    foreach ($places as $place) {
+        $key = mb_strtolower(preg_replace('/[^\p{L}\p{N}]+/u', '', $place['name']) ?? '', 'UTF-8');
+        if ($key !== '' && !isset($unique[$key])) $unique[$key] = $place;
+    }
+    return array_values($unique);
+}
+
+function answerWithEvidenceFallback(string $query, array $candidates, array $evidence, string $model = ''): array {
+    $fallbackIds = array_map(fn($p) => $p['_id'], $candidates);
+    $webPlaces = evidencePlacesFallback($evidence);
+    $names = [];
+    foreach (array_slice($candidates, 0, 5) as $place) {
+        $name = trim((string)($place['name'] ?? ''));
+        if ($name !== '') $names[] = $name;
+    }
+    $answer = $names
+        ? 'Based on your request, here are relevant Davao City options: ' . implode(', ', $names) . '.'
+        : 'I could not find a matching restaurant in the local Davao City data.';
+    return [$answer, $fallbackIds, 'error', $evidence['sources'] ?? [], $webPlaces, false, $model ?: OPENAI_MODEL];
+}
+
+function localOllamaAvailable(): bool {
+    if (DEEPSEEK_API_KEY !== '') return true;
+    $ch = curl_init(rtrim(DEEPSEEK_BASE_URL, '/') . '/api/tags');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER=>true,
+        CURLOPT_CONNECTTIMEOUT=>2,
+        CURLOPT_TIMEOUT=>2,
+        CURLOPT_IPRESOLVE=>CURL_IPRESOLVE_V4
+    ]);
+    $raw = curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return $raw !== false && $status >= 200 && $status < 300;
 }
 
 function answerWithDeepSeekPipelineFallback(string $query, array $history, array $candidates, array $evidence, array $options = []): array {
     $fallbackIds = array_map(fn($p) => $p['_id'], $candidates);
+    $localAnswer = function () use ($query, $candidates, $evidence, $fallbackIds): array {
+        $names = [];
+        foreach (array_slice($candidates, 0, 5) as $place) {
+            $name = trim((string)($place['name'] ?? ''));
+            if ($name !== '') $names[] = $name;
+        }
+        $webPlaces = evidencePlacesFallback($evidence);
+        $answer = $names
+            ? 'Based on your request, here are relevant Davao City options: ' . implode(', ', $names) . '.'
+            : 'I could not find a matching place in the local Davao City data.';
+        return [$answer, $fallbackIds, 'error', $evidence['sources'] ?? [], $webPlaces, false, DEEPSEEK_MODEL];
+    };
+    if (!localOllamaAvailable()) {
+        error_log('DeepSeek unavailable: Ollama is not reachable at ' . DEEPSEEK_BASE_URL);
+        return $localAnswer();
+    }
     $compact = [];
     foreach (array_slice($candidates, 0, 12) as $p) $compact[] = [
         'id'=>$p['_id'], 'name'=>$p['name'], 'food_type'=>mb_substr((string)($p['food_type'] ?? ''), 0, 80),
@@ -57,24 +157,24 @@ function answerWithDeepSeekPipelineFallback(string $query, array $history, array
     if (DEEPSEEK_API_KEY !== '') {
         $base = rtrim(DEEPSEEK_BASE_URL !== '' ? DEEPSEEK_BASE_URL : 'https://api.deepseek.com', '/');
         $payload = json_encode(['model'=>DEEPSEEK_MODEL,'messages'=>$messages,'temperature'=>(float)($options['temperature'] ?? 0.2),'response_format'=>['type'=>'json_object']], JSON_UNESCAPED_UNICODE);
-        [$raw,$status] = deepSeekHttpPost($base . '/chat/completions', ['Content-Type: application/json','Authorization: Bearer ' . DEEPSEEK_API_KEY], $payload, 180);
+        [$raw,$status] = deepSeekHttpPost($base . '/chat/completions', ['Content-Type: application/json','Authorization: Bearer ' . DEEPSEEK_API_KEY], $payload, 8);
     } else {
         $payload = json_encode(['model'=>DEEPSEEK_MODEL,'messages'=>$messages,'stream'=>false,'format'=>'json','options'=>['temperature'=>(float)($options['temperature'] ?? 0.2),'num_ctx'=>8192,'num_predict'=>800]], JSON_UNESCAPED_UNICODE);
-        [$raw,$status] = deepSeekHttpPost(DEEPSEEK_BASE_URL . '/api/chat', ['Content-Type: application/json'], $payload, 300);
+        [$raw,$status] = deepSeekHttpPost(DEEPSEEK_BASE_URL . '/api/chat', ['Content-Type: application/json'], $payload, 8);
     }
     if ($raw === '' || $status < 200 || $status >= 300) {
         error_log('DeepSeek fallback failed HTTP ' . $status . ': ' . mb_substr($raw, 0, 500));
-        return ['', $fallbackIds, 'error', $evidence['sources'] ?? [], [], false, DEEPSEEK_MODEL];
+        return $localAnswer();
     }
     $decoded = json_decode($raw, true);
     $text = $decoded['choices'][0]['message']['content'] ?? ($decoded['message']['content'] ?? null);
-    if (!is_string($text)) return ['', $fallbackIds, 'error', $evidence['sources'] ?? [], [], false, DEEPSEEK_MODEL];
+    if (!is_string($text)) return $localAnswer();
     $text = preg_replace('/<think>.*?<\/think>/s', '', $text);
     $text = trim((string)$text);
     if (preg_match('/\{.*\}/s', $text, $match)) $text = $match[0];
     $parsed = json_decode($text, true);
     if (!is_array($parsed) || !is_string($parsed['answer'] ?? null) || !is_bool($parsed['out_of_scope'] ?? null) || !is_array($parsed['ids'] ?? null) || !is_array($parsed['web_places'] ?? null)) {
-        return ['', $fallbackIds, 'error', $evidence['sources'] ?? [], [], false, DEEPSEEK_MODEL];
+        return $localAnswer();
     }
     if ($parsed['out_of_scope']) return [trim($parsed['answer']) ?: 'I can only suggest places in Davao City.', [], 'ready', [], [], true, DEEPSEEK_MODEL];
 
@@ -115,7 +215,7 @@ function answerWithHybridPipeline(string $query, array $history, array $candidat
     [$cleanerRaw,$cleanerStatus] = deepSeekHttpPost('https://api.openai.com/v1/chat/completions', ['Content-Type: application/json','Authorization: Bearer ' . OPENAI_API_KEY], $cleanerPayload, 45);
     if ($cleanerRaw === '' || $cleanerStatus < 200 || $cleanerStatus >= 300) {
         error_log('GPT-4o mini Playwright cleaner failed HTTP ' . $cleanerStatus . ': ' . mb_substr($cleanerRaw,0,500));
-        return answerWithDeepSeekPipelineFallback($query, $history, $candidates, $evidence, $options);
+        return answerWithEvidenceFallback($query, $candidates, $evidence, OPENAI_MODEL);
     }
     $cleanerDecoded = json_decode($cleanerRaw, true);
     $cleanerText = $cleanerDecoded['choices'][0]['message']['content'] ?? '{}';
@@ -134,10 +234,10 @@ function answerWithHybridPipeline(string $query, array $history, array $candidat
         if (DEEPSEEK_API_KEY !== '') {
             $base = rtrim(DEEPSEEK_BASE_URL !== '' ? DEEPSEEK_BASE_URL : 'https://api.deepseek.com', '/');
             $payload = json_encode(['model'=>DEEPSEEK_MODEL,'messages'=>$curatorMessages,'temperature'=>0.2,'response_format'=>['type'=>'json_object']], JSON_UNESCAPED_UNICODE);
-            [$curatorRaw,$curatorStatus] = deepSeekHttpPost($base . '/chat/completions', ['Content-Type: application/json','Authorization: Bearer ' . DEEPSEEK_API_KEY], $payload, 180);
+            [$curatorRaw,$curatorStatus] = deepSeekHttpPost($base . '/chat/completions', ['Content-Type: application/json','Authorization: Bearer ' . DEEPSEEK_API_KEY], $payload, 8);
         } else {
             $payload = json_encode(['model'=>DEEPSEEK_MODEL,'messages'=>$curatorMessages,'stream'=>false,'format'=>'json','options'=>['temperature'=>0.2]], JSON_UNESCAPED_UNICODE);
-            [$curatorRaw,$curatorStatus] = deepSeekHttpPost(DEEPSEEK_BASE_URL . '/api/chat', ['Content-Type: application/json'], $payload, 180);
+            [$curatorRaw,$curatorStatus] = deepSeekHttpPost(DEEPSEEK_BASE_URL . '/api/chat', ['Content-Type: application/json'], $payload, 8);
         }
         if ($curatorStatus >= 200 && $curatorStatus < 300 && $curatorRaw !== '') {
             $curatorDecoded = json_decode($curatorRaw, true);
@@ -164,7 +264,7 @@ function answerWithHybridPipeline(string $query, array $history, array $candidat
     [$finalRaw,$finalStatus] = deepSeekHttpPost('https://api.openai.com/v1/chat/completions', ['Content-Type: application/json','Authorization: Bearer ' . OPENAI_API_KEY], $finalPayload, 45);
     if ($finalRaw === '' || $finalStatus < 200 || $finalStatus >= 300) {
         error_log('GPT-4o mini final response failed HTTP ' . $finalStatus . ': ' . mb_substr($finalRaw,0,500));
-        return answerWithDeepSeekPipelineFallback($query, $history, $candidates, $evidence, $options);
+        return answerWithEvidenceFallback($query, $candidates, $evidence, OPENAI_MODEL);
     }
     $finalDecoded = json_decode($finalRaw, true);
     $finalText = $finalDecoded['choices'][0]['message']['content'] ?? '{}';
@@ -219,15 +319,54 @@ function answerWithGPT4oMini(string $query, array $history, array $candidates, a
     [$raw,$status] = deepSeekHttpPost('https://api.openai.com/v1/chat/completions', ['Content-Type: application/json','Authorization: Bearer ' . OPENAI_API_KEY], $payload, 45);
     if ($raw === '' || $status < 200 || $status >= 300) {
         error_log('GPT-4o mini API error HTTP ' . $status . ': ' . mb_substr($raw, 0, 500));
-        return ['', $fallbackIds, 'error', $evidence['sources'] ?? [], [], false, OPENAI_MODEL];
+        $errorDetail = trim(mb_substr($raw, 0, 300));
+        $decodedError = json_decode($raw, true);
+        if (is_array($decodedError) && is_string($decodedError['error']['message'] ?? null)) {
+            $errorDetail = trim((string)$decodedError['error']['message']);
+        } elseif ($status === 0) {
+            $errorDetail = 'HTTP request timed out or could not connect';
+        }
+        $GLOBALS['providerErrors']['gpt4o'] = [
+            'http'=>$status,
+            'message'=>mb_substr($errorDetail, 0, 300),
+        ];
+        return answerWithEvidenceFallback($query, $candidates, $evidence, OPENAI_MODEL);
     }
     $decoded = json_decode($raw, true);
     $text = $decoded['choices'][0]['message']['content'] ?? null;
-    if (!is_string($text)) return ['', $fallbackIds, 'error', $evidence['sources'] ?? [], [], false, OPENAI_MODEL];
+    if (!is_string($text)) {
+        $GLOBALS['providerErrors']['gpt4o'] = ['http'=>$status, 'message'=>'OpenAI returned HTTP 200 but no message content'];
+        return ['', $fallbackIds, 'error', $evidence['sources'] ?? [], [], false, OPENAI_MODEL];
+    }
     $text = trim($text);
     if (preg_match('/\{.*\}/s', $text, $match)) $text = $match[0];
     $parsed = json_decode($text, true);
+    if (is_array($parsed) && is_array($parsed['answer'] ?? null)) {
+        $parsed['answer'] = implode("\n", array_filter(array_map(
+            fn($value) => is_string($value) ? trim($value) : (is_scalar($value) ? trim((string)$value) : ''),
+            $parsed['answer']
+        ), fn($value) => $value !== ''));
+    }
+    if (is_array($parsed) && is_array($parsed['out_of_scope'] ?? null)) {
+        $scopeValues = array_values(array_filter($parsed['out_of_scope'], fn($value) => is_bool($value) || is_string($value) || is_numeric($value)));
+        $scopeValue = $scopeValues[0] ?? false;
+        $parsed['out_of_scope'] = is_bool($scopeValue)
+            ? $scopeValue
+            : in_array(strtolower(trim((string)$scopeValue)), ['true', '1', 'yes'], true);
+    }
     if (!is_array($parsed) || !is_string($parsed['answer'] ?? null) || !is_bool($parsed['out_of_scope'] ?? null) || !is_array($parsed['ids'] ?? null) || !is_array($parsed['web_places'] ?? null)) {
+        $jsonError = json_last_error_msg();
+        $returnedKeys = is_array($parsed) ? implode(', ', array_keys($parsed)) : $jsonError;
+        $fieldTypes = is_array($parsed)
+            ? 'answer=' . gettype($parsed['answer'] ?? null)
+              . '; out_of_scope=' . gettype($parsed['out_of_scope'] ?? null)
+              . '; ids=' . gettype($parsed['ids'] ?? null)
+              . '; web_places=' . gettype($parsed['web_places'] ?? null)
+            : 'json=' . $jsonError;
+        $GLOBALS['providerErrors']['gpt4o'] = [
+            'http'=>$status,
+            'message'=>'OpenAI returned HTTP 200 but invalid structured JSON. Keys: ' . mb_substr($returnedKeys, 0, 120) . '. Types: ' . mb_substr($fieldTypes, 0, 180),
+        ];
         return ['', $fallbackIds, 'error', $evidence['sources'] ?? [], [], false, OPENAI_MODEL];
     }
     if ($parsed['out_of_scope']) return [trim($parsed['answer']) ?: 'I can only suggest places in Davao City.', [], 'ready', [], [], true, OPENAI_MODEL];
@@ -273,11 +412,11 @@ function answerWithDeepSeek(string $query, array $history, array $candidates, ar
         $base = rtrim(DEEPSEEK_BASE_URL !== '' ? DEEPSEEK_BASE_URL : 'https://api.deepseek.com', '/');
         $payload = json_encode(['model'=>DEEPSEEK_MODEL,'messages'=>$messages,'temperature'=>(float)$temperature,'response_format'=>['type'=>'json_object']], JSON_UNESCAPED_UNICODE);
         $headers = ['Content-Type: application/json','Authorization: Bearer ' . DEEPSEEK_API_KEY];
-        [$raw,$status] = deepSeekHttpPost($base . '/chat/completions', $headers, $payload, 120);
+        [$raw,$status] = deepSeekHttpPost($base . '/chat/completions', $headers, $payload, 8);
     } else {
         $base = rtrim(DEEPSEEK_BASE_URL !== '' ? DEEPSEEK_BASE_URL : 'http://127.0.0.1:11434', '/');
         $payload = json_encode(['model'=>DEEPSEEK_MODEL,'messages'=>$messages,'stream'=>false,'format'=>'json','options'=>['temperature'=>(float)$temperature]], JSON_UNESCAPED_UNICODE);
-        [$raw,$status] = deepSeekHttpPost($base . '/api/chat', ['Content-Type: application/json'], $payload, 180);
+        [$raw,$status] = deepSeekHttpPost($base . '/api/chat', ['Content-Type: application/json'], $payload, 8);
     }
     if ($raw === '' || $status < 200 || $status >= 300) {
         error_log('DeepSeek API error HTTP ' . $status . ': ' . mb_substr($raw, 0, 500));
@@ -312,7 +451,15 @@ function answerWithDeepSeek(string $query, array $history, array $candidates, ar
 
 function deepSeekHttpPost(string $url, array $headers, string $payload, int $timeout): array {
     $ch = curl_init($url);
-    curl_setopt_array($ch, [CURLOPT_POST=>true,CURLOPT_HTTPHEADER=>$headers,CURLOPT_POSTFIELDS=>$payload,CURLOPT_RETURNTRANSFER=>true,CURLOPT_TIMEOUT=>$timeout]);
+    curl_setopt_array($ch, [
+        CURLOPT_POST=>true,
+        CURLOPT_HTTPHEADER=>$headers,
+        CURLOPT_POSTFIELDS=>$payload,
+        CURLOPT_RETURNTRANSFER=>true,
+        CURLOPT_CONNECTTIMEOUT=>3,
+        CURLOPT_TIMEOUT=>$timeout,
+        CURLOPT_IPRESOLVE=>CURL_IPRESOLVE_V4
+    ]);
     $raw = curl_exec($ch); $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); if ($raw === false) $raw = curl_error($ch); curl_close($ch);
     return [(string)$raw,$status];
 }

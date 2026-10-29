@@ -32,11 +32,11 @@ A small server-rendered site using HTML, CSS, JavaScript, PHP, DeepSeek R1, GPT-
    Playwright evidence is cached by normalized query for 12 hours in `data/.web-cache`. Identical or equivalent queries reuse cached evidence; each page is also bounded by timeouts.
 5. Start the server from this same PowerShell window:
    ```powershell
-   Set-Location 'C:\Josh Gutierrez\Thesis 2\DavaoFoodFinder\Davao-Food-Finder-main\Davao-Food-Finder-main\davao_food_finder'
-   & 'C:\xampp\php\php.exe' -d extension=gd -S 127.0.0.1:8081 -t .
+   Set-Location 'C:\Users\cyber\OneDrive\Documents\Thesis20261028-main\Davao-Food-Finder-main\Davao-Food-Finder-main\davao_food_finder'
+   & 'C:\xampp\php\php.exe' -d extension=gd -S 127.0.0.1:8080 -t .
    ```
    If XAMPP or the project is installed elsewhere, adjust the PHP executable and project folder paths. Without a key, the app can still show matches from the local dataset. Keep the key on the server: do not put it in `Main.html` or browser JavaScript, and do not commit a real key to source control. The app is configured to use `gpt-4o-mini`.
-5. Open [http://127.0.0.1:8081](http://127.0.0.1:8081) in your browser. Keep the PowerShell window open while using the app; press **Ctrl+C** there to stop the server. If the terminal reports that port `8081` is already in use, choose another port in the server command and open that same port in your browser.
+5. Open [http://127.0.0.1:8080/Main.html](http://127.0.0.1:8080/Main.html) in your browser. Keep the PowerShell window open while using the app; press **Ctrl+C** there to stop the server. If the terminal reports that port `8080` is already in use, choose another port and open that same port in your browser.
 
 Run the commands in the same PowerShell window so the optional API key is available to PHP. The PHP server serves `index.php`, which redirects to `Main.html`. Do not open `Main.html` as a `file://` URL or use a static-only preview extension: searches need PHP to handle `api.php`.
 
@@ -58,6 +58,8 @@ On macOS/Linux, use `cd davao_food_finder`, `composer install`, optionally set `
 
 The CLI evaluation runner compares temperatures `0.0`, `0.3`, and `0.7` with the `baseline` and `strict_grounding` prompt styles. Top-P remains fixed at `1.0`. The runner can evaluate DeepSeek R1, GPT-4o mini, or both against the same ground-truth queries and the same Playwright evidence cache. This is an exhaustive grid sweep for the selected providers.
 
+For a fast run with one configuration per selected provider, add `--quick`. Quick mode uses temperature `0.0` with the `baseline` prompt style.
+
 The initial labeled dataset is in `evaluation/ground_truth.json`. Its three in-scope queries explicitly ask for Japanese restaurants, coffee shops, and fried-chicken restaurants in Davao City. Expected names come only from rows in `ph_restos_2025.csv` whose `City` contains `Davao City` and whose `FoodType` exactly matches that query category (28 Japanese, 96 Coffee, and 44 Fried Chicken records in the current CSV). This is a transparent taxonomy-derived starting point, not an independent human relevance judgment: review the category labels and cases with your thesis team before reporting results. Names are matched case-insensitively with punctuation ignored.
 
 The same file includes scope checks requesting Japanese restaurants in Tagum City and coffee shops in Cebu City. These verify the Davao City-only constraint; a scope check passes only when the AI marks the request out-of-scope and returns no local or web recommendations. The runner rejects in-scope queries that do not explicitly name Davao City. `evaluation/ground_truth.example.json` shows the file structure if you want to add or replace test cases.
@@ -65,11 +67,17 @@ The same file includes scope checks requesting Japanese restaurants in Tagum Cit
 Keep Ollama running for DeepSeek R1 and keep the PHP web server running in another window. For both-provider comparison, also set `OPENAI_API_KEY` before starting PHP. Then run in a second PowerShell window:
 
 ```powershell
-Set-Location 'C:\Josh Gutierrez\Thesis 2\DavaoFoodFinder\Davao-Food-Finder-main\Davao-Food-Finder-main\davao_food_finder'
+Set-Location 'C:\Users\cyber\OneDrive\Documents\Thesis20261028-main\Davao-Food-Finder-main\Davao-Food-Finder-main\davao_food_finder'
 & 'C:\xampp\php\php.exe' .\evaluation\run_evaluation.php --require-ai --providers=deepseek,gpt-4o-mini
 ```
 
-Use `--provider=deepseek` or `--provider=gpt-4o-mini` for a single-model run. The runner sends requests to `http://127.0.0.1:8081/api.php`; for another local port, use `--api-url=http://127.0.0.1:8080/api.php`. API keys remain in the PHP process and are never read or printed by the CLI runner. Hosted GPT usage may incur charges; local Ollama does not require a DeepSeek API key.
+For the faster one-config-per-provider run:
+
+```powershell
+& 'C:\xampp\php\php.exe' .\evaluation\run_evaluation.php --quick --require-ai --providers=deepseek,gpt-4o-mini
+```
+
+Use `--provider=deepseek` or `--provider=gpt-4o-mini` for a single-model run. The runner sends requests to `http://127.0.0.1:8080/api.php`; for another local port, use that port in `--api-url`. API keys remain in the PHP process and are never read or printed by the CLI runner. Hosted GPT usage may incur charges; local Ollama does not require a DeepSeek API key.
 
 Per-query output reports Precision@5 and request latency for Davao City relevance queries, plus pass/fail and latency for the out-of-city scope checks. Precision@5 is `relevant unique names in the first five local results / 5`; failed or non-AI relevance requests receive a score of zero and all failed requests are counted in the error rate. The final table reports mean Precision@5, mean and median end-to-end HTTP latency, error rate, and Davao-only scope violations for each configuration. It also reports a tie-corrected Friedman test across the repeated in-scope query scores when at least two queries are available. The included three relevance queries are an initial benchmark, not a large validation sample; add diverse, independently labeled Davao City queries before making strong statistical claims:
 
