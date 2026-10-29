@@ -67,7 +67,7 @@ h1{font-size:clamp(36px,6vw,62px);letter-spacing:-.055em;line-height:1.03;margin
 </style></head><body><main class="wrap"><header class="hero"><div class="eyebrow">Davao City · Food guide</div><h1>What's on your mind?</h1><p>Find a new favorite in Davao City. Tell us what you’re craving and explore local spots, ratings, and directions.</p></header>
 <div class="chat"><div id="thread" class="thread" aria-live="polite"><div class="bubble assistant">Hi! What are you craving? Try “fried chicken”, “quiet cafes to study”, or “more affordable Japanese food”. I’ll search for current information and share the places with you.</div></div>
 <form id="searchForm" class="search"><input id="query" name="query" placeholder="Ask for food or follow-up options…" autocomplete="off" required maxlength="300"><button id="sendButton" type="submit">Send</button></form><p id="status" class="status" role="status"></p></div>
-<div class="footer"><p id="modelIndicator">AI model configured: gpt-4o-mini · actual model is shown after a successful AI response.</p>Web answers include source links · Ratings and place details come from your dataset · Photos are illustrative, not verified restaurant photos.</div></main>
+<div class="footer"><p id="modelIndicator">AI model configured: DeepSeek R1 · actual model is shown after a successful AI response.</p>Live evidence is gathered by Playwright · Ratings and place details come from your 2025 dataset or verified web sources · Photos are illustrative, not verified restaurant photos.</div></main>
 <div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><section class="modal"><button id="closeModal" class="close" aria-label="Close details">&times;</button><div id="modalContent"></div></section></div>
 <script>
 const form=document.getElementById('searchForm'),input=document.getElementById('query'),button=document.getElementById('sendButton'),statusEl=document.getElementById('status'),thread=document.getElementById('thread'),backdrop=document.getElementById('modalBackdrop'),modelIndicator=document.getElementById('modelIndicator');
@@ -116,8 +116,8 @@ form.addEventListener('submit',async e=>{
    :webResults.length
     ?`${webResults.length} AI-sourced ${webResults.length===1?'recommendation':'recommendations'} shown with links to sources.`
     :`${count} local dataset ${count===1?'match':'matches'} shown.`;
-  if(!outOfScope&&data.assistantStatus==='not_configured')statusEl.textContent+=' OpenAI is not configured; set OPENAI_API_KEY on the PHP server to enable AI and live web search.';
-  else if(!outOfScope&&data.assistantStatus==='error')statusEl.textContent+=' Live web search could not be completed; showing local dataset matches. Check the PHP server error log.';
+  if(!outOfScope&&data.assistantStatus==='not_configured')statusEl.textContent+=' AI pipeline not configured. Set OPENAI_API_KEY for GPT-4o mini cleaning/final response; DeepSeek R1 can then use Ollama or DEEPSEEK_API_KEY.';
+  else if(!outOfScope&&data.assistantStatus==='error')statusEl.textContent+=' The AI pipeline or Playwright could not complete the live check; showing local dataset matches. Check the PHP server error log.';
  }catch(err){
   const message=err instanceof TypeError
    ?(location.protocol==='file:'?'This page was opened as a file. Start the PHP server and open http://127.0.0.1:8080/Main.html instead.':'Cannot reach the PHP server. Start it with `php -S 127.0.0.1:8080 -t davao_food_finder` from the workspace folder, then retry.')

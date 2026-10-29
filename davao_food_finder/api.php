@@ -6,6 +6,7 @@ header('X-Content-Type-Options: nosniff');
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/src/config.php';
 require_once __DIR__ . '/src/search.php';
+require_once __DIR__ . '/src/web_reasoner.php';
 
 try {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); throw new RuntimeException('Use POST for searches.'); }
@@ -14,6 +15,30 @@ try {
     $history = is_array($body['history'] ?? null) ? array_slice($body['history'], -10) : [];
     $shownNames = is_array($body['shownNames'] ?? null) ? array_slice($body['shownNames'], 0, 30) : [];
     if ($query === '' || mb_strlen($query) > 300) { http_response_code(422); throw new RuntimeException('Enter a search query up to 300 characters.'); }
+    $openAIOptions = [];
+    $reasoningProvider = 'deepseek';
+    if (isset($body['evaluation'])) {
+        if (!in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true)) {
+            http_response_code(403);
+            throw new RuntimeException('Evaluation configuration is only available to local requests.');
+        }
+        $evaluation = $body['evaluation'];
+        if (!is_array($evaluation)) {
+            http_response_code(422);
+            throw new RuntimeException('Invalid evaluation configuration.');
+        }
+        $temperature = $evaluation['temperature'] ?? null;
+        $promptStyle = $evaluation['promptStyle'] ?? null;
+        $provider = strtolower(trim((string)($evaluation['provider'] ?? 'deepseek')));
+        if (!is_numeric($temperature) || (float)$temperature < 0 || (float)$temperature > 2
+            || !in_array($promptStyle, ['baseline', 'strict_grounding'], true)
+            || !in_array($provider, ['deepseek', 'gpt-4o-mini'], true)) {
+            http_response_code(422);
+            throw new RuntimeException('Invalid evaluation configuration.');
+        }
+        $openAIOptions = ['temperature'=>(float)$temperature, 'promptStyle'=>$promptStyle];
+        $reasoningProvider = $provider;
+    }
 
     // Cache the expensive CSV import between requests. Delete data/.places-cache.json to rebuild it.
     $cacheFile = __DIR__ . '/data/.places-cache.json';
@@ -45,7 +70,12 @@ try {
         $seenNames = array_fill_keys(array_map(fn($n) => mb_strtolower(trim((string)$n)), $shownNames), true);
         $candidates = array_values(array_filter($candidates, fn($p) => !isset($seenNames[mb_strtolower(trim((string)$p['name']))])));
     }
-    [$answer, $rankedIds, $assistantStatus, $sources, $webResults, $outOfScope, $modelUsed] = answerWithOpenAI($query, $history, $candidates);
+    $evidence = collectPlaywrightEvidence('Davao City ' . $searchQuery, __DIR__ . '/data/.web-cache', 43200);
+    if ($reasoningProvider === 'gpt-4o-mini') {
+        [$answer, $rankedIds, $assistantStatus, $sources, $webResults, $outOfScope, $modelUsed] = answerWithGPT4oMini($query, $history, $candidates, $evidence, $openAIOptions);
+    } else {
+        [$answer, $rankedIds, $assistantStatus, $sources, $webResults, $outOfScope, $modelUsed] = answerWithHybridPipeline($query, $history, $candidates, $evidence, $openAIOptions);
+    }
     if ($outOfScope) $candidates = [];
     $byId = [];
     foreach ($candidates as $p) $byId[$p['_id']] = $p;
