@@ -1,6 +1,6 @@
 {
   "name": "davao-food-finder/prototype",
-  "description": "Plain PHP Davao City food-place search using Excel datasets and OpenAI",
+  "description": "Plain PHP Davao City food-place search using 2025 datasets, DeepSeek R1, and Playwright", 
   "type": "project",
   "require": {
     "php": ">=8.1",
